@@ -56,6 +56,7 @@ const CONFIG={
       trash:'assets/trash-bag-pile.glb',bollard:'assets/bollard.glb',bikeRack:'assets/bike-rack.glb',vending:'assets/vending-machine.glb',truck:'assets/1950s-pickup-truck.glb'}
   },
   textures:{wall:null,floor:null,grass:null,road:null}, // optional image URLs
+  githubRepo:'',              // optional 'user/repo' if not on github.io
   charYawOffset:0,            // adjust if your character models face the wrong way (radians)
   scaling:{baseCivilians:20,perPlayer:10,maxPlayers:6},
   speeds:{walk:2.6,run:5.5,civWalk:2.4,civPanic:5.6},
@@ -112,15 +113,31 @@ const LOCAL={};
 const bkey=u=>u.split('/').pop().toLowerCase().replace(/\.glb$/,'').replace(/[ _-]*\(?\d+\)?$/,'');
 function finishM(g,norm){if(norm){const b=new THREE.Box3().setFromObject(g.scene),c=b.getCenter(new THREE.Vector3()),w=new THREE.Group();g.scene.position.set(-c.x,-b.min.y,-c.z);w.add(g.scene);g.scene=w}return g}
 const FAIL=[],BASE=new URL(/\/$|\.\w+$/.test(location.pathname)?'.':location.pathname+'/',location.href).href;
+function repoInfo(){const q=new URLSearchParams(location.search).get('repo')||CONFIG.githubRepo;if(q&&q.includes('/')){const[u,r]=q.split('/');return{u,r}}
+ if(/\.github\.io$/i.test(location.hostname)){const seg=location.pathname.split('/')[1];return{u:location.hostname.split('.')[0],r:(!seg||/\./.test(seg))?location.hostname:seg}}return null}
+let TREE=null;
+function tree(){return TREE||(TREE=(async()=>{const ri=repoInfo();if(!ri)return null;
+ for(const br of['HEAD','main','master']){try{const r=await fetch('https://api.github.com/repos/'+ri.u+'/'+ri.r+'/git/trees/'+br+'?recursive=1');if(r.ok){const j=await r.json();return{ri,br,files:j.tree.filter(t=>/\.glb$/i.test(t.path)).map(t=>t.path)}}}catch(e){}}
+ return{ri,br:null,files:null}})())}
 function loadM(url,norm){if(!url)return Promise.resolve(null);if(cache[url])return cache[url];
- return cache[url]=(async()=>{const ld=new THREE.GLTFLoader(),k=bkey(url),name=url.split('/').pop().replace(/\.glb$/,'');
-  const fin=g=>{try{return finishM(g,norm)}catch(e){return null}};
-  if(LOCAL[k]){try{return fin(await new Promise((ok,no)=>ld.parse(LOCAL[k].slice(0),'',ok,no)))}catch(e){FAIL.push(name+': parse error '+(e.message||e));return null}}
-  const dir=url.replace(/[^/]*$/,''),c=[BASE+dir+name+'.glb',BASE+dir+name+'_1.glb',BASE+name+'.glb',BASE+name+'_1.glb',BASE+'models/'+name+'.glb'],errs=[];
-  for(const u of c){try{const r=await fetch(u);if(!r.ok){errs.push(r.status+' '+u);continue}const b=await r.arrayBuffer();
+ return cache[url]=(async()=>{const name=url.split('/').pop().replace(/\.glb$/,'');
+  try{const ld=new THREE.GLTFLoader(),k=bkey(url);
+  const fin=g=>{try{return finishM(g,norm)}catch(e){return null}},parse=(b,u)=>new Promise((ok,no)=>ld.parse(b,u.replace(/[^/]*$/,''),ok,no));
+  if(LOCAL[k]){try{return fin(await parse(LOCAL[k].slice(0),''))}catch(e){FAIL.push(name+': parse error '+(e.message||e));return null}}
+  const dir=url.replace(/[^/]*$/,''),errs=[];
+  const attempt=async list=>{for(const u of list){try{const r=await fetch(u);if(!r.ok){errs.push(r.status+' '+u);continue}const b=await r.arrayBuffer();
    if(b.byteLength<3000&&/git-lfs|<html/i.test(new TextDecoder().decode(b))){errs.push('not a real .glb (LFS pointer or HTML page): '+u);continue}
-   return fin(await new Promise((ok,no)=>ld.parse(b,u.replace(/[^/]*$/,''),ok,no)))}catch(e){errs.push((e.message||e)+' '+u)}}
-  FAIL.push(name+': '+errs[0]);return null})()}
+   return fin(await parse(b,u))}catch(e){errs.push((e.message||e)+' '+u)}}return null};
+  const EM=window.MODELS&&window.MODELS[k];
+  if(EM){try{const bin=atob(EM),u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return fin(await parse(u8.buffer,''))}catch(e){errs.push('embedded model error: '+(e.message||e))}}
+  let g=await attempt([BASE+dir+name+'.glb',BASE+dir+name+'_1.glb',BASE+name+'.glb',BASE+name+'_1.glb',BASE+'models/'+name+'.glb']);
+  if(g)return g;
+  const t=await tree();   // fallback: find the file anywhere in the GitHub repo and load it from there
+  if(t&&t.files){const{u,r}=t.ri,found=t.files.filter(p=>bkey(p)===k);
+   const list=[];found.forEach(p=>{list.push('https://raw.githubusercontent.com/'+u+'/'+r+'/'+t.br+'/'+p.split('/').map(encodeURIComponent).join('/'));if(t.br!=='HEAD')list.push('https://cdn.jsdelivr.net/gh/'+u+'/'+r+'@'+t.br+'/'+p.split('/').map(encodeURIComponent).join('/'))});
+   g=await attempt(list);if(g)return g}
+  FAIL.push(name+': not found - expected assets/'+name+'.js ('+errs[0]+')');return null}
+  catch(e){FAIL.push(name+': '+(e.message||e)+(window.THREE&&THREE.GLTFLoader?'':' (GLTFLoader library did not load - CDN blocked?)'));return null}})()}
 function ctex(draw,s=128){const c=document.createElement('canvas');c.width=c.height=s;draw(c.getContext('2d'),s);return new THREE.CanvasTexture(c)}
 const DRAW={
  wall:(x,s)=>{x.fillStyle='#d8cdb8';x.fillRect(0,0,s,s);x.strokeStyle='#b7a98e';x.lineWidth=3;x.strokeRect(6,6,s-12,s-12)},
@@ -349,10 +366,13 @@ $('mapSel').onchange=()=>{G.map=$('mapSel').value;lobbyBcast()};
 // ===================== BOOT =====================
 async function loadAll(){
  FAIL.length=0;for(const k in cache)delete cache[k];for(const k in CH)delete CH[k];for(const k in PR)delete PR[k];
+ const nm=[...['sheriff','murderer','civilian'].map(k=>CONFIG.models[k]),CONFIG.models.blaster,...Object.values(CONFIG.models.props)].filter(Boolean).map(bkey);
+ await Promise.all([...new Set(nm)].map(n=>new Promise(r=>{if(window.MODELS&&window.MODELS[n])return r();const sc=document.createElement('script');sc.src=BASE+'assets/'+n+'.js';sc.onload=sc.onerror=()=>r();document.head.appendChild(sc)})));
  try{await Promise.all([...['sheriff','murderer','civilian'].map(k=>loadM(CONFIG.models[k]).then(g=>CH[k]=g)),loadM(CONFIG.models.blaster,1).then(g=>PR.blaster=g),...Object.keys(CONFIG.models.props).map(k=>loadM(CONFIG.models.props[k],1).then(g=>PR[k]=g))])}catch(e){}
  const got=Object.values(CH).filter(Boolean).length+Object.values(PR).filter(Boolean).length,tot=Object.keys(CH).length+Object.keys(PR).length;
  $('load').textContent=got===tot?'Models loaded ✔ ('+got+'/'+tot+')':got?'Loaded '+got+'/'+tot+' models — missing ones use placeholders.':'No models found — click "Load models from your computer" below.';
- $('diag').textContent=FAIL.length?'Details:\n'+FAIL.slice(0,5).join('\n'):'';if(location.protocol==='file:'&&!got)$('load').textContent+=' (Opened from disk: browsers block file loading, so pick the .glb files manually.)'}
+ let tm='';if(FAIL.length&&TREE){const t=await TREE;if(t&&t.ri)tm=t.files===null?'Could not read GitHub repo '+t.ri.u+'/'+t.ri.r+' (private, wrong name, or API rate limit). Add ?repo=USER/REPO to the page URL to override.\n':t.files.length===0?'Repo '+t.ri.u+'/'+t.ri.r+' contains NO .glb files - the assets were not uploaded (upload the assets folder, or add files via git).\n':'Repo '+t.ri.u+'/'+t.ri.r+' has these .glb files: '+t.files.join(', ')+'\n'}
+ $('diag').textContent=FAIL.length?'Details:\n'+tm+FAIL.slice(0,5).join('\n'):'';if(location.protocol==='file:'&&!got)$('load').textContent+=' (Opened from disk: browsers block file loading, so pick the .glb files manually.)'}
 async function pickFiles(files){
  $('load').textContent='Reading files…';
  for(const f of files){if(/\.glb$/i.test(f.name))LOCAL[bkey(f.name)]=await f.arrayBuffer()}
