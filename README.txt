@@ -1,10 +1,6 @@
 Hide & Seek Murder Mystery 3D
-=============================
-Files: index.html + assets/*.glb (keep the folder structure).
-
-Run locally (models will NOT load by double-clicking the file):
-  python3 -m http.server 8000   ->  open http://localhost:8000
-Deploy: upload everything to a GitHub repo, enable Pages. Share the invite link from the lobby.
-
-Test modes (main menu): Model Viewer, Sandbox: Sheriff, Sandbox: Murderer (offline, solo).
-Swap models/textures in the CONFIG block at the top of the script in index.html.
+Keep index.html and the assets/ folder together.
+Run: python3 -m http.server 8000 -> http://localhost:8000   (or upload to GitHub Pages)
+If you open index.html by double-clicking, browsers block model loading: use the
+"Load models from your computer" button and select all .glb files (names with _1 are fine).
+Test modes: Model Viewer, Sandbox: Sheriff, Sandbox: Murderer.

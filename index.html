@@ -25,12 +25,12 @@ button{cursor:pointer;background:#c0392b;border-color:#e74c3c;font-weight:600}bu
  <div id="cross"></div><div id="toast"></div><div id="lock">Click to play · WASD move · Shift run · Click attack</div>
  <div class="p" id="bt">Your mouse is captured. Press Esc to release.</div>
 </div>
-<div id="viewer"><div id="vp"><b>Model Viewer</b><div class="sub" id="vinfo"></div><div class="row"><button class="alt" onclick="setAnim(0)">Idle</button><button class="alt" onclick="setAnim(1)">Walk</button><button class="alt" onclick="setAnim(2)">Run</button></div><div id="vl"></div><button onclick="closeViewer()">← Back to menu</button></div><div id="vh">Drag = orbit · Wheel = zoom · ←/→ = next/prev item · 1/2/3 = idle/walk/run</div></div>
+<div id="viewer"><div id="vp"><b>Model Viewer</b><div class="sub" id="vinfo"></div><div class="row"><button class="alt" onclick="setAnim(0)">Idle</button><button class="alt" onclick="setAnim(1)">Walk</button><button class="alt" onclick="setAnim(2)">Run</button></div><div id="vl"></div><button class="alt" id="bPick2">📂 Load .glb files…</button><button onclick="closeViewer()">← Back to menu</button></div><div id="vh">Drag = orbit · Wheel = zoom · ←/→ = next/prev item · 1/2/3 = idle/walk/run</div></div>
 <div class="scr on" id="menu"><div class="card">
  <h1>🔪 Hide &amp; Seek Murder Mystery</h1><p class="sub">3D · peer-to-peer multiplayer · no server needed</p>
  <button id="bHost" disabled>Host Game</button>
  <div class="row"><input id="code" placeholder="Room code / invite link"><button class="alt" id="bJoin" disabled>Join</button></div>
- <div class="row"><button class="alt" id="bView" disabled>🧪 Model Viewer</button></div><div class="row"><button class="alt" id="bSbS" disabled>🧪 Sandbox: Sheriff</button><button class="alt" id="bSbM" disabled>🧪 Sandbox: Murderer</button></div><div class="err" id="menuErr"></div><div class="stat" id="load">Loading models…</div>
+ <div class="row"><button class="alt" id="bView" disabled>🧪 Model Viewer</button></div><div class="row"><button class="alt" id="bSbS" disabled>🧪 Sandbox: Sheriff</button><button class="alt" id="bSbM" disabled>🧪 Sandbox: Murderer</button></div><div class="row"><button class="alt" id="bPick">📂 Load models from your computer (.glb)</button></div><input type="file" id="fpick" multiple accept=".glb" style="display:none"><div class="err" id="menuErr"></div><div class="stat" id="load">Loading models…</div>
 </div></div>
 <div class="scr" id="lobby"><div class="card">
  <h2>Lobby</h2><p class="sub">Players connected: <b id="lp">1</b> · AI civilians: <b id="lc">30</b></p>
@@ -108,8 +108,13 @@ const hemi=new THREE.HemisphereLight(0xffffff,0x556655,.9),sun=new THREE.Directi
 function resize(){renderer.setSize(innerWidth,innerHeight,false);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}addEventListener('resize',resize);resize();
 // ===================== ASSETS =====================
 const cache={};
+const LOCAL={};
+const bkey=u=>u.split('/').pop().toLowerCase().replace(/\.glb$/,'').replace(/[ _-]*\(?\d+\)?$/,'');
+function finishM(g,norm){if(norm){const b=new THREE.Box3().setFromObject(g.scene),c=b.getCenter(new THREE.Vector3()),w=new THREE.Group();g.scene.position.set(-c.x,-b.min.y,-c.z);w.add(g.scene);g.scene=w}return g}
 function loadM(url,norm){if(!url)return Promise.resolve(null);if(cache[url])return cache[url];
- return cache[url]=new Promise(res=>{try{new THREE.GLTFLoader().load(url,g=>{if(norm){const b=new THREE.Box3().setFromObject(g.scene),c=b.getCenter(new THREE.Vector3()),w=new THREE.Group();g.scene.position.set(-c.x,-b.min.y,-c.z);w.add(g.scene);g.scene=w}res(g)},undefined,()=>res(null))}catch(e){res(null)}})}
+ return cache[url]=new Promise(res=>{const done=g=>{try{res(g?finishM(g,norm):null)}catch(e){res(null)}},ld=new THREE.GLTFLoader(),k=bkey(url);
+  if(LOCAL[k]){try{ld.parse(LOCAL[k].slice(0),'',done,()=>done(null))}catch(e){done(null)}return}
+  const tries=[url,url.replace(/\.glb$/,'_1.glb')];(function t(i){if(i>=tries.length)return done(null);try{ld.load(tries[i],done,undefined,()=>t(i+1))}catch(e){t(i+1)}})(0)})}
 function ctex(draw,s=128){const c=document.createElement('canvas');c.width=c.height=s;draw(c.getContext('2d'),s);return new THREE.CanvasTexture(c)}
 const DRAW={
  wall:(x,s)=>{x.fillStyle='#d8cdb8';x.fillRect(0,0,s,s);x.strokeStyle='#b7a98e';x.lineWidth=3;x.strokeRect(6,6,s-12,s-12)},
@@ -336,11 +341,20 @@ $('bAgain').onclick=()=>{if(G.test){entG.clear();sandbox(G.test)}else if(G.net==
 for(const k in MAPS){const o=document.createElement('option');o.value=k;o.textContent=MAPS[k].name;$('mapSel').appendChild(o)}
 $('mapSel').onchange=()=>{G.map=$('mapSel').value;lobbyBcast()};
 // ===================== BOOT =====================
+async function loadAll(){
+ for(const k in cache)delete cache[k];for(const k in CH)delete CH[k];for(const k in PR)delete PR[k];
+ try{await Promise.all([...['sheriff','murderer','civilian'].map(k=>loadM(CONFIG.models[k]).then(g=>CH[k]=g)),loadM(CONFIG.models.blaster,1).then(g=>PR.blaster=g),...Object.keys(CONFIG.models.props).map(k=>loadM(CONFIG.models.props[k],1).then(g=>PR[k]=g))])}catch(e){}
+ const got=Object.values(CH).filter(Boolean).length+Object.values(PR).filter(Boolean).length,tot=Object.keys(CH).length+Object.keys(PR).length;
+ $('load').textContent=got===tot?'Models loaded ✔ ('+got+'/'+tot+')':got?'Loaded '+got+'/'+tot+' models — missing ones use placeholders.':'No models found — click "Load models from your computer" below.';
+ if(location.protocol==='file:'&&!got)$('load').textContent+=' (Opened from disk: browsers block file loading, so pick the .glb files manually.)'}
+async function pickFiles(files){
+ $('load').textContent='Reading files…';
+ for(const f of files){if(/\.glb$/i.test(f.name))LOCAL[bkey(f.name)]=await f.arrayBuffer()}
+ await loadAll();if(G.state==='view')openViewer()}
+$('bPick').onclick=()=>$('fpick').click();$('bPick2').onclick=()=>$('fpick').click();$('fpick').onchange=e=>pickFiles([...e.target.files]);
 (async()=>{
  if(!window.Peer||!window.THREE||!THREE.GLTFLoader){$('menuErr').textContent='Failed to load libraries (check your internet connection).'}
- try{await Promise.all([...['sheriff','murderer','civilian'].map(k=>loadM(CONFIG.models[k]).then(g=>CH[k]=g)),loadM(CONFIG.models.blaster,1).then(g=>PR.blaster=g),...Object.keys(CONFIG.models.props).map(k=>loadM(CONFIG.models.props[k],1).then(g=>PR[k]=g))])}catch(e){}
- const got=Object.values(CH).filter(Boolean).length+Object.values(PR).filter(Boolean).length;
- $('load').textContent=got?'Models loaded ✔':'No .glb found in /assets — using built-in placeholder shapes.';
+ await loadAll();
  $('bHost').disabled=$('bJoin').disabled=!window.Peer;$('bView').disabled=$('bSbS').disabled=$('bSbM').disabled=false;
  const room=new URLSearchParams(location.search).get('room');if(room&&window.Peer){$('code').value=room;joinGame(room)}
  requestAnimationFrame(loop)})();
