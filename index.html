@@ -30,7 +30,7 @@ button{cursor:pointer;background:#c0392b;border-color:#e74c3c;font-weight:600}bu
  <h1>🔪 Hide &amp; Seek Murder Mystery</h1><p class="sub">3D · peer-to-peer multiplayer · no server needed</p>
  <button id="bHost" disabled>Host Game</button>
  <div class="row"><input id="code" placeholder="Room code / invite link"><button class="alt" id="bJoin" disabled>Join</button></div>
- <div class="row"><button class="alt" id="bView" disabled>🧪 Model Viewer</button></div><div class="row"><button class="alt" id="bSbS" disabled>🧪 Sandbox: Sheriff</button><button class="alt" id="bSbM" disabled>🧪 Sandbox: Murderer</button></div><div class="row"><button class="alt" id="bPick">📂 Load models from your computer (.glb)</button></div><input type="file" id="fpick" multiple accept=".glb" style="display:none"><div class="err" id="menuErr"></div><div class="stat" id="load">Loading models…</div>
+ <div class="row"><button class="alt" id="bView" disabled>🧪 Model Viewer</button></div><div class="row"><button class="alt" id="bSbS" disabled>🧪 Sandbox: Sheriff</button><button class="alt" id="bSbM" disabled>🧪 Sandbox: Murderer</button></div><div class="row"><button class="alt" id="bPick">📂 Load models from your computer (.glb)</button></div><input type="file" id="fpick" multiple accept=".glb" style="display:none"><div class="err" id="menuErr"></div><pre id="diag" style="color:#ffd27a;font-size:11px;white-space:pre-wrap;word-break:break-all;margin:6px 0 0"></pre><div class="stat" id="load">Loading models…</div>
 </div></div>
 <div class="scr" id="lobby"><div class="card">
  <h2>Lobby</h2><p class="sub">Players connected: <b id="lp">1</b> · AI civilians: <b id="lc">30</b></p>
@@ -111,10 +111,16 @@ const cache={};
 const LOCAL={};
 const bkey=u=>u.split('/').pop().toLowerCase().replace(/\.glb$/,'').replace(/[ _-]*\(?\d+\)?$/,'');
 function finishM(g,norm){if(norm){const b=new THREE.Box3().setFromObject(g.scene),c=b.getCenter(new THREE.Vector3()),w=new THREE.Group();g.scene.position.set(-c.x,-b.min.y,-c.z);w.add(g.scene);g.scene=w}return g}
+const FAIL=[],BASE=new URL(/\/$|\.\w+$/.test(location.pathname)?'.':location.pathname+'/',location.href).href;
 function loadM(url,norm){if(!url)return Promise.resolve(null);if(cache[url])return cache[url];
- return cache[url]=new Promise(res=>{const done=g=>{try{res(g?finishM(g,norm):null)}catch(e){res(null)}},ld=new THREE.GLTFLoader(),k=bkey(url);
-  if(LOCAL[k]){try{ld.parse(LOCAL[k].slice(0),'',done,()=>done(null))}catch(e){done(null)}return}
-  const tries=[url,url.replace(/\.glb$/,'_1.glb')];(function t(i){if(i>=tries.length)return done(null);try{ld.load(tries[i],done,undefined,()=>t(i+1))}catch(e){t(i+1)}})(0)})}
+ return cache[url]=(async()=>{const ld=new THREE.GLTFLoader(),k=bkey(url),name=url.split('/').pop().replace(/\.glb$/,'');
+  const fin=g=>{try{return finishM(g,norm)}catch(e){return null}};
+  if(LOCAL[k]){try{return fin(await new Promise((ok,no)=>ld.parse(LOCAL[k].slice(0),'',ok,no)))}catch(e){FAIL.push(name+': parse error '+(e.message||e));return null}}
+  const dir=url.replace(/[^/]*$/,''),c=[BASE+dir+name+'.glb',BASE+dir+name+'_1.glb',BASE+name+'.glb',BASE+name+'_1.glb',BASE+'models/'+name+'.glb'],errs=[];
+  for(const u of c){try{const r=await fetch(u);if(!r.ok){errs.push(r.status+' '+u);continue}const b=await r.arrayBuffer();
+   if(b.byteLength<3000&&/git-lfs|<html/i.test(new TextDecoder().decode(b))){errs.push('not a real .glb (LFS pointer or HTML page): '+u);continue}
+   return fin(await new Promise((ok,no)=>ld.parse(b,u.replace(/[^/]*$/,''),ok,no)))}catch(e){errs.push((e.message||e)+' '+u)}}
+  FAIL.push(name+': '+errs[0]);return null})()}
 function ctex(draw,s=128){const c=document.createElement('canvas');c.width=c.height=s;draw(c.getContext('2d'),s);return new THREE.CanvasTexture(c)}
 const DRAW={
  wall:(x,s)=>{x.fillStyle='#d8cdb8';x.fillRect(0,0,s,s);x.strokeStyle='#b7a98e';x.lineWidth=3;x.strokeRect(6,6,s-12,s-12)},
@@ -342,11 +348,11 @@ for(const k in MAPS){const o=document.createElement('option');o.value=k;o.textCo
 $('mapSel').onchange=()=>{G.map=$('mapSel').value;lobbyBcast()};
 // ===================== BOOT =====================
 async function loadAll(){
- for(const k in cache)delete cache[k];for(const k in CH)delete CH[k];for(const k in PR)delete PR[k];
+ FAIL.length=0;for(const k in cache)delete cache[k];for(const k in CH)delete CH[k];for(const k in PR)delete PR[k];
  try{await Promise.all([...['sheriff','murderer','civilian'].map(k=>loadM(CONFIG.models[k]).then(g=>CH[k]=g)),loadM(CONFIG.models.blaster,1).then(g=>PR.blaster=g),...Object.keys(CONFIG.models.props).map(k=>loadM(CONFIG.models.props[k],1).then(g=>PR[k]=g))])}catch(e){}
  const got=Object.values(CH).filter(Boolean).length+Object.values(PR).filter(Boolean).length,tot=Object.keys(CH).length+Object.keys(PR).length;
  $('load').textContent=got===tot?'Models loaded ✔ ('+got+'/'+tot+')':got?'Loaded '+got+'/'+tot+' models — missing ones use placeholders.':'No models found — click "Load models from your computer" below.';
- if(location.protocol==='file:'&&!got)$('load').textContent+=' (Opened from disk: browsers block file loading, so pick the .glb files manually.)'}
+ $('diag').textContent=FAIL.length?'Details:\n'+FAIL.slice(0,5).join('\n'):'';if(location.protocol==='file:'&&!got)$('load').textContent+=' (Opened from disk: browsers block file loading, so pick the .glb files manually.)'}
 async function pickFiles(files){
  $('load').textContent='Reading files…';
  for(const f of files){if(/\.glb$/i.test(f.name))LOCAL[bkey(f.name)]=await f.arrayBuffer()}
